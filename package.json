@@ -4,7 +4,7 @@
   "engines": {
     "node": ">=20.11.1"
   },
-  "packageManager": "pnpm@10.4.1",
+  "packageManager": "pnpm@10.11.0+sha512.6540583f41cc5f628eb3d9773ecee802f4f9ef9923cc45b69890fb47991d4b092964694ec3a4f738a420c918a333062c8b925d312f42e4f0c263eb603551f977",
   "scripts": {
     "build": "turbo build",
     "clean": "git clean -xdf node_modules",
@@ -30,7 +30,14 @@
     "@turbo/gen": "^1.12.4",
     "prettier": "^3.3.3",
     "turbo": "^1.12.4",
-    "typescript": "~5.3.3"
+    "typescript": "catalog:"
   },
-  "prettier": "@qt/prettier-config"
+  "prettier": "@qt/prettier-config",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "core-js-pure",
+      "esbuild",
+      "sharp"
+    ]
+  }
 }

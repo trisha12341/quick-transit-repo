@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useState } from "react";
-import Image from "next/image";
-import { StarIcon } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { isEmpty } from "lodash";
+import { StarIcon, User2Icon } from "lucide-react";
 
 import { RouterOutputs } from "@qt/api";
 import { Avatar, AvatarFallback, AvatarImage } from "@qt/ui/avatar";
@@ -15,13 +16,18 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@qt/ui/dialog";
-import { Input } from "@qt/ui/input";
+import { ScrollArea } from "@qt/ui/scroll-area";
 import { HStack, VStack } from "@qt/ui/stack";
 import { Text } from "@qt/ui/text";
+import { toast } from "@qt/ui/toast";
 
 import { api } from "~/trpc/react";
+import InputSearch from "./input-search";
+import { SpinnerPage } from "./spinner-page";
 
-type PartnerRouteReturnType = Awaited<RouterOutputs["auth"]["getPartners"][0]>;
+type PartnerRouteReturnType = Awaited<
+  RouterOutputs["auth"]["getPartners"]["items"][0]
+>;
 
 function PartnerListItem({
   partner,
@@ -35,9 +41,12 @@ function PartnerListItem({
   const utils = api.useUtils();
 
   const assignPartner = api.requests.assignPartner.useMutation({
-    async onSuccess(data) {
+    async onSuccess() {
       await utils.requests.invalidate();
       await utils.packages.invalidate();
+      toast.success("Partner assigned successfully", {
+        position: "bottom-center",
+      });
       onOpenChange(false); //shut the dialog
     },
   });
@@ -53,13 +62,14 @@ function PartnerListItem({
   return (
     <HStack className="w-full items-center justify-between pr-3">
       <HStack>
-        <Avatar className="border">
+        <Avatar className="border [&_svg]:size-full">
           <AvatarImage
-            src={"/partner-pic.png"}
             alt="partner pic"
             className="bg-gradient-to-r from-primary/50 to-primary/90 object-cover"
           />
-          <AvatarFallback>U</AvatarFallback>
+          <AvatarFallback className="overflow-hidden bg-primary/20">
+            <User2Icon className="mt-3 fill-primary text-transparent" />
+          </AvatarFallback>
         </Avatar>
         <VStack className="gap-0">
           <Text>{partner.name}</Text>
@@ -82,6 +92,61 @@ function PartnerListItem({
   );
 }
 
+function PartnersList({
+  packageId,
+  onOpenChange,
+}: {
+  packageId: string;
+  onOpenChange: React.Dispatch<React.SetStateAction<boolean>>;
+}) {
+  const searchParams = useSearchParams();
+  const query = searchParams.get("q") ?? "";
+
+  const { data, isLoading, hasNextPage, isFetchingNextPage, fetchNextPage } =
+    api.auth.getAvailablePartners.useInfiniteQuery(
+      { query },
+      {
+        getNextPageParam: ({ nextCursor }) => nextCursor,
+      },
+    );
+
+  const items = data?.pages.flatMap((p) => p.items) ?? [];
+
+  if (isLoading) return <SpinnerPage />;
+
+  if (isEmpty(items))
+    return (
+      <div className="flex h-[400px] w-full items-center justify-center">
+        <h1 className="text-lg font-semibold">No partners to show</h1>
+      </div>
+    );
+
+  return (
+    <ScrollArea className="h-[400px] w-full">
+      <VStack className="py-5 pr-2">
+        {items.map((partner) => (
+          <PartnerListItem
+            key={partner.id}
+            {...{ partner, packageId, onOpenChange }}
+          />
+        ))}
+        <div className="w-full pr-2 text-center">
+          {hasNextPage ? (
+            <Button
+              onClick={() => fetchNextPage()}
+              isLoading={isFetchingNextPage}
+              className="w-fit"
+              variant={"secondary"}
+            >
+              Show More
+            </Button>
+          ) : null}
+        </div>
+      </VStack>
+    </ScrollArea>
+  );
+}
+
 export default function AssignDialog({
   children,
   packageId,
@@ -89,8 +154,6 @@ export default function AssignDialog({
   children: React.ReactNode;
   packageId: string;
 }) {
-  const partners = api.auth.getPartners.useQuery();
-
   const [open, onOpenChange] = useState(false);
 
   return (
@@ -103,13 +166,11 @@ export default function AssignDialog({
             Assign partner to pick up the package
           </DialogDescription>
         </DialogHeader>
-        <VStack className="h-full">
-          <Input placeholder="Search partner..." />
-          <VStack className="h-[400px] w-full overflow-y-auto py-5">
-            {partners?.data?.map((partner) => (
-              <PartnerListItem {...{ partner, packageId, onOpenChange }} />
-            ))}
-          </VStack>
+
+        <VStack className="h-full w-full">
+          <InputSearch />
+
+          <PartnersList packageId={packageId} onOpenChange={onOpenChange} />
         </VStack>
       </DialogContent>
     </Dialog>

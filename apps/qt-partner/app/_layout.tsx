@@ -3,13 +3,18 @@ import "~/global.css";
 import * as React from "react";
 import { AppState, View } from "react-native";
 import { useFonts } from "expo-font";
-import { Slot, SplashScreen, useFocusEffect } from "expo-router";
+import {
+  router,
+  Slot,
+  SplashScreen,
+  useFocusEffect,
+  useSegments,
+} from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { DefaultTheme, Theme, ThemeProvider } from "@react-navigation/native";
 import { PortalHost } from "@rn-primitives/portal";
 
-import { setAndroidNavigationBar } from "~/lib/android-navigation-bar";
 import { NAV_THEME } from "~/lib/constants";
 import { supabase, SupabaseProvider } from "~/lib/supabase";
 import { TRPCProvider } from "~/lib/trpc/api";
@@ -41,6 +46,10 @@ AppState.addEventListener("change", (state) => {
   }
 });
 
+export const unstable_settings = {
+  initialRouteName: "(root)",
+};
+
 function WithSplashScreenHandle({ children }: { children: React.ReactNode }) {
   const [loaded, error] = useFonts({
     GeistBlack: require("../assets/fonts/Geist-Black.otf"),
@@ -48,21 +57,21 @@ function WithSplashScreenHandle({ children }: { children: React.ReactNode }) {
 
   const { colorScheme, setColorScheme, isDarkColorScheme } = useColorScheme();
 
+  const segments = useSegments();
+
   const [isColorSchemeLoaded, setIsColorSchemeLoaded] = React.useState(false);
-  const { isLoaded: isSessionLoaded } = useSupabase();
+  const { isLoaded: isSessionLoaded, isLoggedin } = useSupabase();
 
   React.useEffect(() => {
     (async () => {
       const theme = await AsyncStorage.getItem("theme");
 
       if (!theme) {
-        setAndroidNavigationBar(colorScheme);
         AsyncStorage.setItem("theme", colorScheme);
         setIsColorSchemeLoaded(true);
         return;
       }
       const colorTheme = theme === "dark" ? "dark" : "light";
-      setAndroidNavigationBar(colorScheme);
 
       if (colorTheme !== colorScheme) {
         setColorScheme(colorTheme);
@@ -70,16 +79,24 @@ function WithSplashScreenHandle({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      if (!isSessionLoaded || !segments) return;
+
+      const isAuthSegment = segments[0] === "(auth)";
+      const isRootSegment = segments[0] === "(root)";
+
+      if (isLoggedin && isAuthSegment) router.replace("/(root)/(tabs)");
+      else if (!isLoggedin && isRootSegment) router.replace("/(auth)");
+
       setIsColorSchemeLoaded(true);
     })();
-  }, [isColorSchemeLoaded]);
+  }, [isColorSchemeLoaded, isSessionLoaded, segments, isLoggedin]);
 
   useFocusEffect(
     React.useCallback(() => {
-      if (isSessionLoaded && loaded) {
+      if (loaded && isColorSchemeLoaded) {
         SplashScreen.hide();
       }
-    }, [isSessionLoaded, loaded]),
+    }, [loaded, isColorSchemeLoaded]),
   );
 
   if (!isColorSchemeLoaded) {
@@ -92,10 +109,7 @@ function WithSplashScreenHandle({ children }: { children: React.ReactNode }) {
 
   return (
     <ThemeProvider value={isDarkColorScheme ? DARK_THEME : LIGHT_THEME}>
-      <StatusBar
-        style={isDarkColorScheme ? "light" : "dark"}
-        backgroundColor="transparent"
-      />
+      <StatusBar style="auto" />
       <View
         style={{
           flex: 1,

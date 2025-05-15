@@ -5,25 +5,34 @@ import { z } from "zod";
 
 import {
   and,
-  between,
+  bill_details,
   count,
   desc,
   eq,
+  getTableColumns,
   ilike,
+  lte,
   notInArray,
   or,
   packageInsertSchema,
   packages,
   requests,
-  requestsSelectSchema,
   sql,
   user,
 } from "@qt/db";
 
 import { createTRPCRouter, protectedProcedure } from "../trpc";
+import {
+  cursorPaginateInputSchema,
+  getPagination,
+  paginateInputSchema,
+} from "../utils";
 import { billsRouterCaller } from "./bills";
 
 export const packagesRouter = createTRPCRouter({
+  /**
+   * Get recently raised packages
+   */
   getRecentPackages: protectedProcedure
     .input(z.object({ requireAll: z.boolean().optional() }).optional())
     .query(async ({ ctx, input }) => {
@@ -55,106 +64,81 @@ export const packagesRouter = createTRPCRouter({
         },
       });
     }),
-  getAllByUserId: protectedProcedure
-    .input(z.object({ query: z.boolean().optional() }).optional())
+
+  /**
+   * Get's all packages based on the current logged in user role
+   */
+  getAll: protectedProcedure
+    .input(
+      paginateInputSchema.and(
+        z.object({
+          query: z.string().optional(),
+        }),
+      ),
+    )
     .query(async ({ ctx, input }) => {
-      return await ctx.db.query.packages.findMany({
-        where: input?.query
-          ? and(
-              eq(packages.customer_id, ctx.user.id),
-              ilike(packages.title, `%${input.query}%`),
-            )
-          : eq(packages.customer_id, ctx.user.id),
-        orderBy: desc(packages.created_at),
-        with: {
+      const { pageIndex, pageSize, query } = input;
+      const { offset } = getPagination(pageIndex, pageSize);
+
+      const queryCond = or(
+        ilike(packages.title, `%${query}%`),
+        ilike(sql`"requests"."tracking_number"`, `%${query}%`),
+      );
+
+      // Find wheather user is manager or customer
+
+      const userRow = await ctx.db.query.user.findFirst({
+        where: eq(user.id, ctx.user.id),
+      });
+
+      if (!userRow)
+        throw new TRPCError({ message: "User not found", code: "BAD_REQUEST" });
+
+      const userCond =
+        userRow.role === "customer"
+          ? eq(packages.customer_id, userRow.id)
+          : undefined;
+
+      const packagesList = await ctx.db
+        .select({
+          ...getTableColumns(packages),
           request: {
-            columns: {
-              tracking_number: true,
-              current_status: true,
-            },
-            with: {
-              partner: true,
-            },
+            tracking_number: requests.tracking_number,
+            current_status: requests.current_status,
           },
           bill: {
-            extras(fields, operators) {
-              return {
-                totalAmount:
-                  operators.sql<number>`${fields.gst_charges}+${fields.insurance_charge}+${fields.service_charge}`.as(
-                    "totalAmount",
-                  ),
-              };
-            },
+            totalAmount:
+              sql<number>`${bill_details.gst_charges}+${bill_details.insurance_charge}+${bill_details.service_charge}`.as(
+                "totalAmount",
+              ),
           },
-        },
-      });
+        })
+        .from(packages)
+        .innerJoin(requests, eq(requests.package_id, packages.id))
+        .leftJoin(bill_details, eq(bill_details.id, packages.bill_id))
+        .where(and(queryCond, userCond))
+        .orderBy(desc(packages.created_at))
+        .limit(pageSize)
+        .offset(offset);
+
+      const aggr = await ctx.db
+        .select({ count: count(packages.id).as("count") })
+        .from(packages)
+        .innerJoin(requests, eq(requests.package_id, packages.id))
+        .where(and(queryCond, userCond))
+        .then((r) => r.at(0));
+
+      return {
+        items: packagesList,
+        pageCount: Math.ceil((aggr?.count ?? 0) / pageSize),
+        pageIndex: offset,
+        pageSize,
+      };
     }),
 
-  getAll: protectedProcedure
-    .input(z.object({ query: z.string().optional() }).optional())
-    .query(async ({ ctx, input }) => {
-      return await ctx.db.query.packages.findMany({
-        where: input?.query
-          ? or(ilike(packages.title, `%${input.query}%`))
-          : undefined,
-        orderBy: desc(packages.created_at),
-        with: {
-          request: {
-            columns: {
-              tracking_number: true,
-              current_status: true,
-            },
-            with: {
-              partner: true,
-            },
-          },
-          bill: {
-            extras(fields, operators) {
-              return {
-                totalAmount:
-                  operators.sql<number>`${fields.gst_charges}+${fields.insurance_charge}+${fields.service_charge}`.as(
-                    "totalAmount",
-                  ),
-              };
-            },
-          },
-        },
-      });
-    }),
-  getByCustomerId: protectedProcedure
-    .input(z.object({ query: z.string().optional() }).optional())
-    .query(async ({ ctx, input }) => {
-      return await ctx.db.query.packages.findMany({
-        where: input?.query
-          ? and(
-              eq(packages.customer_id, ctx.user.id),
-              ilike(packages.title, `%${input.query}%`),
-            )
-          : eq(packages.customer_id, ctx.user.id),
-        orderBy: desc(packages.created_at),
-        with: {
-          request: {
-            columns: {
-              tracking_number: true,
-              current_status: true,
-            },
-            with: {
-              partner: true,
-            },
-          },
-          bill: {
-            extras(fields, operators) {
-              return {
-                totalAmount:
-                  operators.sql<number>`${fields.gst_charges}+${fields.insurance_charge}+${fields.service_charge}`.as(
-                    "totalAmount",
-                  ),
-              };
-            },
-          },
-        },
-      });
-    }),
+  /**
+   * Get package details by given package ID
+   */
   getById: protectedProcedure
     .input(z.object({ id: z.string(), isAdmin: z.boolean().optional() }))
     .query(async ({ ctx, input }) => {
@@ -175,7 +159,7 @@ export const packagesRouter = createTRPCRouter({
           destination_address: true,
           category: true,
           courier: true,
-          timeslot:true,
+          timeslot: true,
           bill: {
             extras(fields, operators) {
               return {
@@ -189,6 +173,10 @@ export const packagesRouter = createTRPCRouter({
         },
       });
     }),
+
+  /**
+   * Get all packages assigned to partner
+   */
   getByPartnerId: protectedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
@@ -214,6 +202,10 @@ export const packagesRouter = createTRPCRouter({
         },
       });
     }),
+
+  /**
+   * Add package by the customer
+   */
   addPackage: protectedProcedure
     .input(packageInsertSchema.omit({ customer_id: true, bill_id: true }))
     .mutation(async ({ ctx, input }) => {
@@ -266,6 +258,10 @@ export const packagesRouter = createTRPCRouter({
 
       if (request) return { code: "Created", message: "Created successfully" };
     }),
+
+  /**
+   *  Get's tracking information
+   */
   getTrackingDetails: protectedProcedure
     .input(z.object({ package_id: z.string() }))
     .query(({ ctx, input }) => {
@@ -280,6 +276,8 @@ export const packagesRouter = createTRPCRouter({
         },
       });
     }),
+
+  /** Cancell the request */
   cancelRequest: protectedProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input, ctx }) => {
@@ -289,6 +287,10 @@ export const packagesRouter = createTRPCRouter({
         .where(eq(requests.package_id, input.id))
         .returning();
     }),
+
+  /**
+   * Get all packages with tracking information
+   */
   getAllTrackingDetails: protectedProcedure
     .input(z.object({ offset: z.number() }))
     .query(async ({ ctx, input: { offset } }) => {
@@ -314,6 +316,10 @@ export const packagesRouter = createTRPCRouter({
         totalRecords: res[0]?.totalRecords ?? 0,
       };
     }),
+
+  /**
+   * Get packages with offset and status
+   */
   getByStatusWithOffset: protectedProcedure
     .input(
       z.object({
@@ -347,6 +353,8 @@ export const packagesRouter = createTRPCRouter({
         totalRecords: res[0]?.totalRecords ?? 0,
       };
     }),
+
+  /** Assign a partner to the requested package */
   assignPartner: protectedProcedure
     .input(z.object({ partnerId: z.string(), packageId: z.string() }))
     .mutation(async ({ ctx, input: { packageId, partnerId } }) => {
@@ -360,6 +368,10 @@ export const packagesRouter = createTRPCRouter({
         .where(eq(requests.package_id, packageId))
         .returning();
     }),
+
+  /**
+   * Get raised packages count by date for analytics
+   */
   getAllCountByDate: protectedProcedure.query(async ({ input, ctx }) => {
     return ctx.db
       .select({
@@ -374,22 +386,87 @@ export const packagesRouter = createTRPCRouter({
       .leftJoin(requests, eq(requests.package_id, packages.id))
       .groupBy(sql`date`);
   }),
+
+  /**
+   * Get all assigned packages with partner context
+   */
   getAllAssignedPackages: protectedProcedure
-    .input(z.object({ offset: z.number(), query: z.string().optional() }))
-    .query(async ({ ctx, input: { offset, query } }) => {
-      const packagesDetials = await ctx.db.query.requests.findMany({
+    .input(
+      cursorPaginateInputSchema
+        .and(z.object({ query: z.string().optional() }))
+        .optional(),
+    )
+    .query(async ({ ctx, input }) => {
+      const cursor = input?.cursor;
+      const limit = input?.limit ?? 10;
+      const cursorCond = cursor ? lte(requests.id, cursor) : undefined;
+
+      const packagesList = await ctx.db.query.requests.findMany({
         with: {
           package: true,
         },
-        where: and(eq(requests.partner_id, ctx.user.id)),
-        orderBy: ({ created_at }) => desc(created_at),
-        offset,
+        where: and(eq(requests.partner_id, ctx.user.id), cursorCond),
+        orderBy: ({ created_at, id }) => [desc(id), desc(created_at)],
+        limit: limit + 1,
       });
 
+      const nextCursor =
+        packagesList.length > limit ? packagesList.pop()?.id : undefined;
+
       return {
-        packages: packagesDetials,
+        items: packagesList,
+        nextCursor,
+        limit,
       };
     }),
+
+  /**
+   * Get all assigned packages for today with partner context
+   */
+  getAllAssignedPackagesForToday: protectedProcedure
+    .input(cursorPaginateInputSchema.optional())
+    .query(async ({ ctx, input }) => {
+      const cursor = input?.cursor;
+      const limit = input?.limit ?? 10;
+      const cursorCond = cursor ? lte(requests.id, cursor) : undefined;
+
+      const packagesList = await ctx.db
+        .select()
+        .from(requests)
+        .fullJoin(packages, eq(requests.package_id, packages.id))
+        .where(
+          and(
+            eq(requests.partner_id, ctx.user.id),
+            eq(
+              sql`DATE(${packages.pickup_date})`,
+              sql`${new Date().toDateString()}`,
+            ),
+            cursorCond,
+          ),
+        )
+        .orderBy(desc(requests.id), desc(requests.current_status))
+        .limit(limit + 1);
+
+      const mappedPackagesList = packagesList.map(({ packages, requests }) => ({
+        ...requests,
+        package: packages,
+      }));
+
+      const nextCursor =
+        mappedPackagesList.length > limit
+          ? mappedPackagesList.pop()?.id
+          : undefined;
+
+      return {
+        items: mappedPackagesList,
+        nextCursor,
+        limit,
+      };
+    }),
+
+  /**
+   * Get packages with specified query string
+   */
   search: protectedProcedure
     .input(
       z.object({
@@ -438,6 +515,10 @@ export const packagesRouter = createTRPCRouter({
         totalCount,
       };
     }),
+
+  /**
+   * Verify the package with presented otp to the customer
+   */
   verify: protectedProcedure
     .input(
       z.object({
@@ -465,11 +546,15 @@ export const packagesRouter = createTRPCRouter({
         })
         .where(eq(requests.package_id, input.package_id));
     }),
+
+  /**
+   * Update tracking details of any package request
+   */
   updateTrackingDetails: protectedProcedure
     .input(
       z.object({
         tracking_id: z.string(),
-        // image_url: z.string().min(6).max(6),
+        image_url: z.string(),
         package_id: z.string().min(1),
       }),
     )
@@ -478,6 +563,7 @@ export const packagesRouter = createTRPCRouter({
       const request = await ctx.db
         .update(requests)
         .set({
+          franchise_reciept_url: input.image_url,
           franchise_tracking_id: input.tracking_id,
           current_status: "delivered",
         })
@@ -485,4 +571,21 @@ export const packagesRouter = createTRPCRouter({
 
       return request;
     }),
+
+  /**
+   * Get's total delivered packages count for partner
+   * @context Partner
+   */
+  getDeliveredCountForPartner: protectedProcedure.query(({ ctx }) =>
+    ctx.db
+      .select({ count: count(requests.partner_id) })
+      .from(requests)
+      .where(
+        and(
+          eq(requests.partner_id, ctx.user.id),
+          eq(requests.current_status, "delivered"),
+        ),
+      )
+      .then((s) => s.at(0)?.count),
+  ),
 });

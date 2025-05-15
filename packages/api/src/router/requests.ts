@@ -1,5 +1,5 @@
-import { Acme } from "next/font/google";
 import { TRPCError } from "@trpc/server";
+import { sql } from "drizzle-orm";
 import { z } from "zod";
 
 import {
@@ -8,6 +8,7 @@ import {
   desc,
   eq,
   ilike,
+  inArray,
   notInArray,
   or,
   packages,
@@ -45,14 +46,15 @@ export const requestsRouter = createTRPCRouter({
       const requestsResponse = await ctx.db
         .select()
         .from(requests)
-        .leftJoin(packages, eq( requests.package_id,packages.id))
-        .leftJoin(user, eq(requests.partner_id,user.id ))
+        .leftJoin(packages, eq(requests.package_id, packages.id))
+        .leftJoin(user, eq(requests.partner_id, user.id))
         .where(
-          fetchByUserId?
-          and(
-            notInArray(requests.current_status, omitStatus),
-            eq(packages.customer_id, ctx.user.id),
-          ):notInArray(requests.current_status, omitStatus)
+          fetchByUserId
+            ? and(
+                notInArray(requests.current_status, omitStatus),
+                eq(packages.customer_id, ctx.user.id),
+              )
+            : notInArray(requests.current_status, omitStatus),
         )
         .orderBy(desc(packages.created_at))
         .offset(offset);
@@ -72,29 +74,23 @@ export const requestsRouter = createTRPCRouter({
     }),
   getByPackageId: protectedProcedure
     .input(z.object({ package_id: z.string() }))
-    .query( async ({ ctx, input }) => {
-      
-
-      
-      
+    .query(async ({ ctx, input }) => {
       const requestsResponse = await ctx.db
         .select()
         .from(requests)
-        .leftJoin(packages, eq( requests.package_id,packages.id))
-        .leftJoin(user, eq(requests.partner_id,user.id ))
-        .where(
-            eq(packages.id, input.package_id),
-        )
+        .leftJoin(packages, eq(requests.package_id, packages.id))
+        .leftJoin(user, eq(requests.partner_id, user.id))
+        .where(eq(packages.id, input.package_id));
 
-      const mappedPackageDetials = requestsResponse.flatMap(
-        ({ packages, requests, user: partner }) => ({
+      const mappedPackageDetials = requestsResponse
+        .flatMap(({ packages, requests, user: partner }) => ({
           package: packages,
           partner,
           ...requests,
-        }),
-      ).at(0);
+        }))
+        .at(0);
 
-      return  mappedPackageDetials
+      return mappedPackageDetials;
     }),
 
   assignPartner: protectedProcedure
@@ -215,9 +211,12 @@ export const requestsRouter = createTRPCRouter({
   //Update the final details derived from the courier office
   update: protectedProcedure
     .input(
-    requestsInsertSchema.partial().omit({id:true}).and(z.object({request_id: z.string().min(1)}))
+      requestsInsertSchema
+        .partial()
+        .omit({ id: true })
+        .and(z.object({ request_id: z.string().min(1) })),
     )
-    .mutation(async ({ ctx, input:{request_id,...values} }) => {
+    .mutation(async ({ ctx, input: { request_id, ...values } }) => {
       //Get the request of package
       const request = await ctx.db
         .update(requests)
@@ -227,5 +226,69 @@ export const requestsRouter = createTRPCRouter({
       return request;
     }),
 
-  //Get requests
+  /**
+   * Get today's analytics for partner
+   * @context Partner
+   */
+  getTodayAnalyticsForPartner: protectedProcedure.query(async ({ ctx }) => {
+    const [deliveredRes, shippingRes, totalPackagesRes] = await Promise.all([
+      ctx.db
+        .select({
+          deliveredCount: count().as("deliveredCount"),
+        })
+        .from(requests)
+        .leftJoin(packages, eq(requests.package_id, packages.id))
+        .where(
+          and(
+            eq(requests.partner_id, ctx.user.id),
+            eq(requests.current_status, "delivered"),
+            eq(
+              sql`DATE(${packages.pickup_date})`,
+              sql`DATE(${new Date().toDateString()})`,
+            ),
+          ),
+        ),
+      ctx.db
+        .select({ shippingCount: count(requests.id).as("shippingCount") })
+        .from(requests)
+        .leftJoin(packages, eq(requests.package_id, packages.id))
+        .where(
+          and(
+            eq(requests.partner_id, ctx.user.id),
+            notInArray(requests.current_status, ["confirmed", "pickedup"]),
+            eq(
+              sql`DATE(${packages.pickup_date})`,
+              sql`DATE(${new Date().toDateString()})`,
+            ),
+          ),
+        ),
+      ctx.db
+        .select({
+          totalPackagesCount: count(requests.id).as("totalPackagesCount"),
+        })
+        .from(requests)
+        .leftJoin(packages, eq(requests.package_id, packages.id))
+        .where(
+          and(
+            eq(requests.partner_id, ctx.user.id),
+            inArray(requests.current_status, [
+              "confirmed",
+              "pickedup",
+              "delivered",
+              "cancelled",
+            ]),
+            eq(
+              sql`DATE(${packages.pickup_date})`,
+              sql`DATE(${new Date().toDateString()})`,
+            ),
+          ),
+        ),
+    ]);
+
+    return {
+      deliveredCount: deliveredRes.at(0)?.deliveredCount,
+      shippingCount: shippingRes.at(0)?.shippingCount,
+      totalPackagesCount: totalPackagesRes.at(0)?.totalPackagesCount,
+    };
+  }),
 });

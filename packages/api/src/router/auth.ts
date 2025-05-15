@@ -3,9 +3,12 @@ import { z } from "zod";
 
 import {
   and,
+  asc,
+  count,
   desc,
   eq,
   ilike,
+  lte,
   or,
   packages,
   sql,
@@ -14,6 +17,11 @@ import {
 } from "@qt/db";
 
 import { createTRPCRouter, protectedProcedure, publicProcedure } from "../trpc";
+import {
+  cursorPaginateInputSchema,
+  getPagination,
+  paginateInputSchema,
+} from "../utils";
 
 export const authRouter = createTRPCRouter({
   getUser: publicProcedure.query(async ({ ctx }) => {
@@ -44,22 +52,36 @@ export const authRouter = createTRPCRouter({
     }),
 
   getCustomers: publicProcedure
-    .input(z.object({ query: z.string().optional() }).optional())
+    .input(paginateInputSchema.and(z.object({ query: z.string().optional() })))
     .query(async ({ ctx, input }) => {
+      const { pageIndex, pageSize, query } = input;
+      const { offset } = getPagination(pageIndex, pageSize);
+
+      const queryCond = or(
+        ilike(user.name, `%${query}%`),
+        ilike(user.email, `%${query}%`),
+      );
+
       const customers = await ctx.db.query.user.findMany({
         columns: {
           role: false,
         },
-        where: input?.query
-          ? and(
-              eq(user.role, "customer"),
-              or(
-                ilike(user.name, `%${input.query}%`),
-                ilike(user.email, `%${input.query}%`),
-              ),
-            )
-          : eq(user.role, "customer"),
+        where: and(eq(user.role, "customer"), queryCond),
+        limit: pageSize,
+        offset,
       });
+
+      const aggr = await ctx.db.query.user
+        .findMany({
+          columns: {},
+          extras: ({ id }) => {
+            return {
+              count: count(id).mapWith(Number).as("count"),
+            };
+          },
+          where: and(eq(user.role, "customer"), queryCond),
+        })
+        .then((r) => r.at(0));
 
       const finalResult = await Promise.all(
         customers.map(async (customer) => {
@@ -83,29 +105,95 @@ export const authRouter = createTRPCRouter({
         }),
       );
 
-      return finalResult;
+      return {
+        items: finalResult,
+        pageCount: Math.ceil((aggr?.count ?? 0) / pageSize),
+        pageIndex: offset,
+        pageSize,
+      };
     }),
+
+  /** Get's partners list */
   getPartners: publicProcedure
-    .input(z.object({ query: z.string().optional() }).optional())
+    .input(paginateInputSchema.and(z.object({ query: z.string().optional() })))
     .query(async ({ ctx, input }) => {
+      const { pageIndex, pageSize, query } = input;
+      const { offset } = getPagination(pageIndex, pageSize);
+
+      const queryCond = or(
+        ilike(user.name, `%${query}%`),
+        ilike(user.email, `%${query}%`),
+      );
+
       const customers = await ctx.db.query.user.findMany({
         columns: {
           role: false,
         },
+        limit: pageSize,
+        offset,
         orderBy: desc(user.created_at),
-        where: input?.query
-          ? and(
-              eq(user.role, "partner"),
-              or(
-                ilike(user.name, `%${input.query}%`),
-                ilike(user.email, `%${input.query}%`),
-              ),
-            )
-          : eq(user.role, "partner"),
+        where: and(eq(user.role, "partner"), queryCond),
       });
 
-      return customers;
+      const aggr = await ctx.db.query.user
+        .findMany({
+          columns: {},
+          extras: ({ id }) => {
+            return {
+              count: count(id).mapWith(Number).as("count"),
+            };
+          },
+          where: and(eq(user.role, "partner"), queryCond),
+        })
+        .then((r) => r.at(0));
+
+      return {
+        items: customers,
+        pageCount: Math.ceil((aggr?.count ?? 0) / pageSize),
+        pageIndex: offset,
+        pageSize,
+      };
     }),
+
+  /**
+   * Get all available partner to assign to package request
+   */
+  getAvailablePartners: publicProcedure
+    .input(
+      cursorPaginateInputSchema
+        .and(z.object({ query: z.string().optional() }))
+        .optional(),
+    )
+    .query(async ({ ctx, input }) => {
+      const cursor = input?.cursor;
+      const limit = input?.limit ?? 10;
+      const query = input?.query;
+
+      const cursorCond = cursor ? lte(user.id, cursor) : undefined;
+
+      const queryCond = query
+        ? or(ilike(user.name, `%${query}%`), ilike(user.email, `%${query}%`))
+        : undefined;
+
+      const partners = await ctx.db.query.user.findMany({
+        columns: {
+          role: false,
+        },
+        limit: limit + 1,
+        orderBy: [desc(user.id), desc(user.created_at)],
+        where: and(eq(user.role, "partner"), queryCond, cursorCond),
+      });
+
+      const nextCursor =
+        partners.length > limit ? partners.pop()?.id : undefined;
+
+      return {
+        items: partners,
+        nextCursor,
+        limit,
+      };
+    }),
+
   updateUserRole: protectedProcedure
     .input(userInsertSchema.pick({ role: true }))
     .mutation(async ({ input, ctx }) => {

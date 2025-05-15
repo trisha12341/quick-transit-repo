@@ -27,16 +27,17 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         backgroundColor: "#FFFFFF",
       },
       package: scheme,
+      edgeToEdgeEnabled: true,
     },
     updates: {
-      url: "https://u.expo.dev/edea622a-6fcf-4f1a-a8e4-cfb033597919",
+      url: "https://u.expo.dev/2b0d80a6-9f84-455b-a6c0-7e95497780a5",
     },
     runtimeVersion: {
       policy: "appVersion",
     },
     extra: {
       eas: {
-        projectId: "edea622a-6fcf-4f1a-a8e4-cfb033597919",
+        projectId: "2b0d80a6-9f84-455b-a6c0-7e95497780a5",
       },
     },
     web: {

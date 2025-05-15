@@ -1,17 +1,11 @@
-import type { SearchParams } from "nuqs";
-import React from "react";
+import InputSearch from "~/app/_components/input-search";
+import { PackagesDataTable } from "./data-table";
 
-import { api } from "~/trpc/server";
-import { loadSearchParams } from "~/utils/search-params";
-import { PackagesList } from "./packages-list";
-
-export default async function DemoPage({
-  searchParams,
-}: {
-  searchParams: Promise<SearchParams>;
-}) {
-  const { q } = await loadSearchParams(searchParams);
-  const data = await api.packages.getByCustomerId({ query: q });
-
-  return <PackagesList initialData={data} />;
+export default async function DemoPage() {
+  return (
+    <div className="flex flex-col gap-5">
+      <InputSearch />
+      <PackagesDataTable />
+    </div>
+  );
 }

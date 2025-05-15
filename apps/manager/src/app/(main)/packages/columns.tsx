@@ -1,19 +1,16 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { ColumnDef } from "@tanstack/react-table";
-import { ArrowUpDown } from "lucide-react";
 import moment from "moment";
 
 import { RouterOutputs } from "@qt/api";
-import { Button } from "@qt/ui/button";
 import { Package, PackageBody, PackageThumbneil } from "@qt/ui/package";
 import { HStack } from "@qt/ui/stack";
 import { StatusTag } from "@qt/ui/status-tag";
 import { Text } from "@qt/ui/text";
 
-export type Package = RouterOutputs["packages"]["getAll"][number];
+export type Package = RouterOutputs["packages"]["getAll"]["items"][number];
 
 export const columns: ColumnDef<Package>[] = [
   {
@@ -24,8 +21,8 @@ export const columns: ColumnDef<Package>[] = [
       return (
         <Link href={`/package-details/${id}`}>
           <Package>
-            <PackageThumbneil>
-              <Image src={"/package-1.jpg"} fill alt="Package Thumbnail" />
+            <PackageThumbneil className="flex items-center justify-center bg-accent/40">
+              <h1 className="text-2xl">📦</h1>
             </PackageThumbneil>
             <PackageBody className="flex flex-col gap-1">
               <Text styles={"small"}>{title}</Text>
@@ -55,20 +52,7 @@ export const columns: ColumnDef<Package>[] = [
   },
   {
     accessorKey: "request.current_status",
-    header: ({ column }: any) => {
-      return (
-        <div className="text-center">
-          <Button
-            variant="ghost"
-            className="text-sm"
-            onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          >
-            Status
-            <ArrowUpDown className="ml-2 h-4 w-4" />
-          </Button>
-        </div>
-      );
-    },
+    header: () => <div className="text-center">Status</div>,
     cell: ({ row }) => {
       const value = row.original;
       return (
@@ -80,20 +64,13 @@ export const columns: ColumnDef<Package>[] = [
   },
   {
     accessorKey: "created_at",
-    header: ({ column }: any) => {
-      return (
-        <Button
-          variant="ghost"
-          className="text-sm"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-        >
-          Requested On
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      );
-    },
+    header: () => <div className="px-5 text-right">Requested On</div>,
     cell({ row }) {
-      return <>{moment(row.original.created_at).fromNow()}</>;
+      return (
+        <div className="px-5 text-right">
+          {moment(row.original.created_at).fromNow()}
+        </div>
+      );
     },
   },
 ];

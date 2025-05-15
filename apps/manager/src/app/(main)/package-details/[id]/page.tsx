@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { format, parse } from "date-fns";
 import { isUndefined } from "lodash";
 import {
@@ -9,7 +10,6 @@ import {
   ClockIcon,
   FileDown,
   MoveHorizontalIcon,
-  PackageIcon,
   ReceiptIndianRupeeIcon,
   RocketIcon,
   ScaleIcon,
@@ -39,8 +39,10 @@ import { Separator } from "@qt/ui/seperator";
 import { HStack, VStack } from "@qt/ui/stack";
 import { Table, TableBody, TableCell, TableRow } from "@qt/ui/table";
 import { Text } from "@qt/ui/text";
+import { toast } from "@qt/ui/toast";
 
 import { api } from "~/trpc/react";
+import { useDownload } from "~/utils/hooks/useDownload";
 import { PackageDetailsSkeleton } from "./skeleton";
 
 function convertTo12HourFormat(time24: string) {
@@ -53,11 +55,22 @@ function convertTo12HourFormat(time24: string) {
   return formattedTime;
 }
 
-export default function PackageDetails({ params }: { params: { id: string } }) {
+export default function PackageDetails() {
   const formatToINR = new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "INR",
   });
+
+  const { download, isPending } = useDownload({
+    onSuccess() {
+      toast.success("Invoice downloaded successfully");
+    },
+    onError(error) {
+      toast.error(error);
+    },
+  });
+
+  const params = useParams<{ id: string }>();
   const { data: packageDetail, isLoading } = api.packages.getById.useQuery({
     id: params.id,
     isAdmin: true,
@@ -103,12 +116,22 @@ export default function PackageDetails({ params }: { params: { id: string } }) {
                   Tracking Number: {packageDetail?.request.tracking_number}
                 </CardDescription>
               </VStack>
-              {packageDetail.request.current_status !== "cancelled" && (
+              {packageDetail.request.current_status === "delivered" && (
                 <HStack className="items-center">
-                  <Button size={"sm"} variant={"outline"}>
+                  <Button
+                    isLoading={isPending}
+                    onClick={() =>
+                      download(
+                        "images",
+                        `invoices/${packageDetail.id}.png`,
+                        `${packageDetail.title}-Franchise-Invoice.png`,
+                      )
+                    }
+                    size={"sm"}
+                    variant={"outline"}
+                  >
                     <FileDown className="h-5 w-5" /> Invoice
                   </Button>
-                  {/* <PackageMoreDropdown packageId={params.id} /> */}
                 </HStack>
               )}
             </HStack>
@@ -200,13 +223,13 @@ export default function PackageDetails({ params }: { params: { id: string } }) {
                           styles={"small"}
                           className=" flex items-center gap-2 text-nowrap text-muted-foreground"
                         >
-                          <CalendarIcon className="size-5" /> Delivery Date
+                          <CalendarIcon className="size-5" /> Pickup Date
                         </Text>
                       </TableCell>
                       <TableCell>
                         <Text styles={"small"} className="col-span-2 w-full ">
-                          {packageDetail?.delivery_date &&
-                            format(packageDetail.delivery_date, "do MMM yyyy")}
+                          {packageDetail?.pickup_date &&
+                            format(packageDetail.pickup_date, "do MMM yyyy")}
                         </Text>
                       </TableCell>
                     </TableRow>
@@ -225,13 +248,17 @@ export default function PackageDetails({ params }: { params: { id: string } }) {
                           className="col-span-2 flex  w-full items-center gap-1 "
                         >
                           <Badge variant={"secondary"}>
-                            {packageDetail?.from_time &&
-                              convertTo12HourFormat(packageDetail?.from_time)}
+                            {packageDetail?.timeslot.from_time &&
+                              convertTo12HourFormat(
+                                packageDetail?.timeslot.from_time,
+                              )}
                           </Badge>
                           <MoveHorizontalIcon className="size-4" />
                           <Badge variant={"secondary"}>
-                            {packageDetail?.to_time &&
-                              convertTo12HourFormat(packageDetail?.to_time)}
+                            {packageDetail?.timeslot.to_time &&
+                              convertTo12HourFormat(
+                                packageDetail?.timeslot.to_time,
+                              )}
                           </Badge>
                         </Text>
                       </TableCell>
@@ -286,30 +313,9 @@ export default function PackageDetails({ params }: { params: { id: string } }) {
                   </TableBody>
                 </Table>
               </VStack>
-              <div className="flex aspect-square w-full max-w-[16rem] items-center justify-center rounded-radius border bg-muted">
-                <PackageIcon className="size-32 text-muted-foreground/60" />
+              <div className="flex aspect-square w-full max-w-[16rem] items-center justify-center rounded-radius border bg-accent/40">
+                <h1 className="text-9xl">📦</h1>
               </div>
-              {/* <Carousel className="relative w-full max-w-xs">
-                  <CarouselContent>
-                    {Array.from({ length: 5 }).map((_, index) => (
-                      <CarouselItem key={index}>
-                        <div className="p-1">
-                          <Card>
-                            <CardContent className="flex aspect-square items-center justify-center p-6">
-                              <span className="text-4xl font-semibold">
-                                {index + 1}
-                              </span>
-                            </CardContent>
-                          </Card>
-                        </div>
-                      </CarouselItem>
-                    ))}
-                  </CarouselContent>
-                  <div className="absolute inset-0 flex h-full w-full items-center justify-between px-4">
-                    <CarouselPrevious />
-                    <CarouselNext />
-                  </div>
-                </Carousel> */}
             </HStack>
           </CardContent>
         </Card>
@@ -343,20 +349,6 @@ export default function PackageDetails({ params }: { params: { id: string } }) {
                 <RocketIcon size={23} />
               </div>
               <Separator className="flex-[.2]" />
-              {/* <Card>
-              <CardHeader>
-                <CardTitle>Franchise Address</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <VStack className="gap-2">
-                  <Text>+91 {packageDetail.franchise_address.phone}</Text>
-                  <Text styles={"subtle"} className="text-muted-foreground">
-                    {packageDetail.franchise_address.street} -{" "}
-                    {packageDetail.franchise_address.pincode}
-                  </Text>
-                </VStack>
-              </CardContent>
-            </Card> */}
               <Card className="h-full w-[17rem] max-w-[17rem] flex-1">
                 <CardHeader>
                   <CardTitle className="text-sm">Delivery Address</CardTitle>
